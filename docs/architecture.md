@@ -1,73 +1,56 @@
-# Architecture and implementation contract
+# Implemented architecture
 
-Implementation note (October 31): see README for the current working scope. Browser updates currently use SSE through the application server; the durable project lives in Terse, and direct browser-to-actor WebSockets are deferred. Model jobs run outside the actor, with status stored in its document. The implemented CAD vocabulary is box, cylinder, annular arc, ordered union/cut, and transforms. The current demonstration uses wearable redesign, superseding the original enclosure example below.
+This document describes the running hackathon implementation, not a proposed cloud deployment.
 
-## User experience
+## Ownership
 
-Large central viewport, left assembly tree, right shared instructions and agent activity. A compact dimension inspector supports genuine human edits. Each proposal names its author, affected parts, base revision, and status. Show previews separately from accepted geometry. A second browser has its own camera and selection but the same accepted assembly and activity.
+| State / work | Owner |
+|---|---|
+| Lobby room names | Terse `RoomDirectory` actor, ID `workspace` |
+| Parts, geometry revision, sequence, history, threads/messages, job status | One Terse `ProjectActor` for each room ID |
+| Undo history | Same ProjectActor; up to 20 previous part lists |
+| Exact imported source solids | Immutable SHA-256-addressed BRep files in `.cad-assets/` |
+| Model inference and tool loop | Concurrent tasks in the application server |
+| Solid compilation, meshing, rendering, STEP import/export | Isolated OpenCascade worker |
+| Camera, selection, unsent per-thread drafts | Individual browser |
+| Presence | Transient SSE connections, counted as browser sessions |
 
-## Geometry choice
+Parts are data inside the room actor. AI teammates are model/tool loops; they are not separate Terse actors. In-flight model execution does not resume automatically after API restart, even though its job status and conversation are durable.
 
-Use Replicad's JavaScript API over OpenCascade WASM. It already exposes solid modeling and STEP export and has an official browser integration example. Three.js displays meshes; it is not the CAD kernel. Direct OpenCascade bindings add unnecessary integration work for this deadline; a Python CAD service adds another deployment boundary.
+## Accepted-edit path
 
-Represent each part as a small typed feature specification: boxes, cylinders, extrusion where needed, union/subtraction, transforms, and named dimensions in millimeters. The model composes these operations; there is no prompt classifier or preselected answer. Start with that tool vocabulary and extend it only when the demo needs an operation. Fillets are optional because topology changes can make them fragile.
+1. A human or model reads revision N.
+2. A structured edit identifies upserted/removed part IDs and base revision N.
+3. The server validates the schema and compiles upserted solids outside the actor. Each part must have positive finite volume and exactly one connected solid.
+4. The actor checks request deduplication and the current revision. A stale proposal fails with `STALE_REVISION`.
+5. On acceptance, it records an undo checkpoint and assigns the new document with revision N+1. Unrelated part records remain unchanged.
+6. The API broadcasts the state through SSE. Browsers reject older sequence numbers and obtain meshes for the accepted revision.
+7. Model tool errors return as observations. On a stale proposal the model is instructed to reread, inspect, and revise. There is no automatic semantic merge or deterministic fallback design.
 
-Use stable application part/feature IDs. Do not identify persistent features by mesh triangle index. Keep PCB dimensions, clearances, wall thickness, and lid overlap in an explicit shared interface record. The AI chooses design changes and records the parameters it read.
+The guard is room-wide. Two edits to different parts may still require a reread. The actor provides serialized execution; geometry validation and revision policy are application logic. Undo and document fields are separate persisted assignments, so this implementation does not claim a cross-field crash-atomic transaction.
 
-Compile geometry in a worker for browser responsiveness. For accepted AI proposals, run authoritative geometry validation in a server-side worker using the same compiler; prove WASM support on the selected host early. Do not evaluate arbitrary model-authored JavaScript. A typed feature interpreter invokes the supported kernel operations.
+## Conversations
 
-## Collaboration
+Each thread has a stable ID, a user-chosen label, and durable user/assistant messages. Start admission happens inside the actor: one active run per thread, at most four per room. The next model call contains only the selected thread's conversation and the latest user message, plus generic CAD guidance. It rereads current geometry through tools.
 
-```mermaid
-flowchart LR
-  A[Browser A] <-->|authorized WebSocket| P[Terse ProjectActor]
-  B[Browser B] <-->|authorized WebSocket| P
-  S[Application server] -->|read snapshot / propose| P
-  S --> R[Body and lid model runs]
-  R --> G[Geometry validation worker]
-  G --> S
-```
+`finish_turn` requires a model-selected `needs_reply` or `complete` status and a message. The UI distinguishes a reply from a geometry commit. No regex or keyword classifier infers whether a message is a question. Names do not imply fixed specialties.
 
-One ProjectActor per shared assembly. Persist the accepted specification, monotonic revision, bounded operation history, proposal records, and request IDs. Presence and cursors are transient. Persist model job state separately where supported; never hold the project actor's serialized handler open during inference or geometry compilation.
+## Geometry tools
 
-MVP workers may run concurrently in the application server, with durable pending/finished status in the project actor. A distinct Terse actor per specialist is an extension only after the main path works. Do not claim model calls resume automatically after server failure unless recovery is actually implemented and tested.
+`read_assembly`, `measure_assembly`, `inspect_part`, `render_view`, `measure_between`, `preview_design`, `commit_design`, `finish_turn`.
 
-## Proposal protocol
+Models receive actual/current candidate render images. They author data validated by schemas, not arbitrary executable JavaScript. Shapes use exact imported source BReps, supported primitive features, and ordered direct-edit operations. Topology indices are scoped to the current shape and may change after edits. Minimum distance zero means contact or overlap, not a correct joint.
 
-1. Human or model reads snapshot at revision N.
-2. Model returns a structured proposal with stable part IDs, operations, rationale, and the exact base revision.
-3. Validate schema and compile the candidate geometry outside the project actor. Tag the validation result with the candidate hash and base revision.
-4. In one short serialized actor operation, check request ID, authorization, validation identity, and current revision.
-5. If the current revision is still N, atomically accept and increment it. Persist before advertising acceptance, using the installed SDK's supported transaction mechanism.
-6. If stale, do not overwrite or silently merge. Return the latest snapshot and change history to the model for a revised proposal and fresh validation. Two disjoint proposals may still require one regeneration in the MVP; correctness beats a rushed merge engine.
-7. Broadcast the accepted revision. Reconnecting clients obtain the latest full snapshot. Reject duplicate request IDs without applying the operation again.
+STEP import preserves named separate solids and centers the assembly consistently. It does not recover Fusion's feature timeline. STEP export compiles accepted solids with names and colors. STL files are optional read-only references.
 
-Human dimension edits use the same acceptance path. Multi-part changes commit as one proposal. No last-writer-wins overwrite of the whole document and no heuristic semantic merge. Bounded model repair attempts expose a useful error if they exhaust their budget.
+## Local runtime
 
-## Model tools
+Vite serves the UI on 5173 and proxies `/api` to Bun/Express on 3100. The local Terse runtime uses 7100. Model keys stay server-side, in memory or an ignored environment file. Public authentication, Terse Cloud, and direct browser-to-actor WebSockets are not implemented; browser updates use application-server SSE.
 
-- Read assembly and shared interface dimensions.
-- Read accepted changes since a revision.
-- Propose part operations against a revision.
-- Compile candidate and inspect kernel errors, bounds, and available measurements.
-- Publish a short user-facing status explaining the proposed change.
+The room directory persists names and IDs. Lobby part/revision/agent counts come from live actor snapshots; connection counts come from active SSE sessions. Thumbnails render accepted CAD and are cached by revision. No simulated rooms, users, or agent activity are included.
 
-Body and lid agents receive distinct responsibilities and the same dimensional interface. They may run concurrently. On a changed interface, each re-reads and revises its work. A coordinator model is optional; the user can assign the two roles directly for the MVP.
+## Persistence and limits
 
-## Validation boundaries
+Back up `.terse/` and `.cad-assets/` together. Git contains portable STEP examples, not the user's live room database. The CAD worker has a 60-second request timeout and is recreated after failure; failures remain visible. A model run has a 20-turn tool budget and 120-second timeout per provider request.
 
-Schema, finite dimensions, kernel construction, nonempty solids, and revision consistency are required. Only show clearance/collision claims when the corresponding geometric test exists. A bounding-box check is not proof of general fit. Demonstrate an actual measured lid/body interface or describe fit as unverified. Do not label the output manufacturing-ready.
-
-The browser receives temporary authorized socket access from the application server; Terse API keys and model credentials remain server-side. A share link grants room access for the demo, not global actor access. Confirm socket grants and actor metadata behavior against the installed SDK.
-
-## Acceptance checks
-
-- Two real clients receive the same accepted revision after a human dimension edit.
-- A stale AI proposal cannot erase a more recent human edit.
-- Duplicate operation delivery does not apply twice.
-- Invalid geometry leaves the accepted assembly unchanged and reports an error.
-- Reload and actor restart recover the accepted assembly; test both separately.
-- Export produces a STEP file that reopens with the expected geometry.
-- No production secret appears in the frontend bundle.
-
-Deployment target: Terse Cloud for actors; a host supporting the chosen server/worker runtime for model orchestration and geometry; static hosting for the frontend. Select after the initial smoke test. Sites can host the frontend, but its Worker runtime must not be assumed sufficient for the CAD worker without testing memory/runtime limits.
+This is a local trusted-client MVP, not a production authorization boundary. No collision-free assembly, mechanical attachment, anatomical fit, manufacturing suitability, or perfect same-body semantic reconciliation is guaranteed. Read [recorded tests](verified-live-runs.json) for what was actually exercised.

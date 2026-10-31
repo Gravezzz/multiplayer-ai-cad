@@ -7,9 +7,9 @@ import { GeometryService } from "./geometry";
 import { runAgent } from "./agents";
 import type { ModelConfig } from "./agents";
 import { editSchema, applyEdit } from "../packages/protocol";
-import type { Project, Edit, Job } from "../packages/protocol";
+import type { Project, Edit, Job, RoomInfo } from "../packages/protocol";
 
-const { invoke, runtime } = await connectActors();
+const { invoke, runtime, directory } = await connectActors();
 const geometry = new GeometryService();
 const app = express();
 app.disable("x-powered-by");
@@ -41,6 +41,9 @@ const meshes = new Map<string, { revision: number; meshes: unknown[] }>();
 const roomSchema = z.string().regex(/^[a-zA-Z0-9_-]{8,80}$/);
 const roomOf = (req: express.Request) => roomSchema.parse(req.params.room);
 const snapshot = (room: string) => invoke(room, "snapshot");
+const registerRoom = (id: string, name?: string) =>
+  directory("register", [JSON.stringify({ id, name })]) as Promise<RoomInfo>;
+const thumbnails = new Map<string, { revision: number; bytes: Buffer }>();
 function broadcast(room: string, state: Project) {
   for (const res of clients.get(room) || [])
     res.write(`event: project\ndata: ${JSON.stringify(state)}\n\n`);
@@ -101,6 +104,55 @@ app.post("/api/settings", (req, res) => {
   config = data;
   res.json({ configured: true, model: config.model });
 });
+app.get("/api/rooms", async (_req, res) => {
+  const rooms = (await directory("list")) as RoomInfo[];
+  const summaries = await Promise.all(
+    rooms.map(async (room) => {
+      const state = await snapshot(room.id);
+      return {
+        ...room,
+        revision: state.revision,
+        parts: state.parts.length,
+        agents: state.threads?.length ?? 0,
+        working: state.jobs.filter((j) => j.status === "running").length,
+        connections: clients.get(room.id)?.size ?? 0,
+      };
+    }),
+  );
+  res.json(summaries);
+});
+app.post("/api/rooms", async (req, res) => {
+  const body = z
+    .object({
+      id: roomSchema.optional(),
+      name: z.string().trim().min(1).max(80),
+    })
+    .parse(req.body);
+  res.json(await registerRoom(body.id ?? randomUUID(), body.name));
+});
+app.get("/api/rooms/:room/info", async (req, res) =>
+  res.json(await registerRoom(roomOf(req))),
+);
+app.get("/api/rooms/:room/thumbnail", async (req, res) => {
+  const room = roomOf(req),
+    state = await snapshot(room);
+  if (!state.parts.length) {
+    res.status(404).end();
+    return;
+  }
+  let thumbnail = thumbnails.get(room);
+  if (!thumbnail || thumbnail.revision !== state.revision) {
+    const result = await geometry.run("render", state.parts, {
+      view: "isometric",
+    });
+    thumbnail = {
+      revision: state.revision,
+      bytes: Buffer.from(result.image.split(",")[1], "base64"),
+    };
+    thumbnails.set(room, thumbnail);
+  }
+  res.type("png").send(thumbnail.bytes);
+});
 app.get("/api/rooms/:room", async (req, res) =>
   res.json(await snapshot(roomOf(req))),
 );
@@ -125,6 +177,7 @@ app.get("/api/rooms/:room/events", async (req, res) => {
     presence();
   });
   try {
+    await registerRoom(room);
     const state = await snapshot(room);
     res.write(`event: project\ndata: ${JSON.stringify(state)}\n\n`);
   } catch (error) {

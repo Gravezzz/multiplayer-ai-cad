@@ -107,6 +107,7 @@ export type AgentThread = {
   name: string;
   messages: ThreadMessage[];
 };
+export type RoomInfo = { id: string; name: string; createdAt: string };
 export type Project = {
   revision: number;
   sequence: number;

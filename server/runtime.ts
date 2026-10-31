@@ -17,5 +17,7 @@ export async function connectActors() {
   });
   const invoke = async (room: string, method: string, args: unknown[] = []) =>
     transport.invoke("ProjectActor", room, method, args) as Promise<Project>;
-  return { invoke, runtime };
+  const directory = (method: string, args: unknown[] = []) =>
+    transport.invoke("RoomDirectory", "workspace", method, args);
+  return { invoke, runtime, directory };
 }

@@ -38,14 +38,10 @@ import {
 } from "../packages/protocol";
 import type { Project, Part, Feature, Edit, Job } from "../packages/protocol";
 import "./style.css";
+import { Lobby } from "./Lobby";
 
 const params = new URLSearchParams(location.search);
-let room = params.get("room");
-if (!room) {
-  room = crypto.randomUUID();
-  params.set("room", room);
-  history.replaceState(null, "", `?${params}`);
-}
+const room = params.get("room");
 const base = `/api/rooms/${room}`;
 const author =
   sessionStorage.getItem("assembly-user") ||
@@ -256,6 +252,7 @@ function Scene({
 }
 
 function App() {
+  const [roomName, setRoomName] = useState("Shared assembly");
   const [project, setProject] = useState<Project>(initialProject),
     [connected, setConnected] = useState(false),
     [presence, setPresence] = useState(0);
@@ -346,6 +343,9 @@ function App() {
     setRawPart(draft ? JSON.stringify(draft, null, 2) : "");
   }, [draft]);
   useEffect(() => {
+    api<{ name: string }>(`${base}/info`)
+      .then((info) => setRoomName(info.name))
+      .catch(() => {});
     api<{ providerConfigured: boolean; model: string; baseUrl: string }>(
       "/api/health",
     )
@@ -512,15 +512,15 @@ function App() {
   return (
     <div className="app">
       <header>
-        <a className="brand" href={location.href}>
+        <a className="brand" href="/" title="All rooms">
           <span className="brand-mark">
             <Layers size={20} />
           </span>
           assembly<span className="beta">LAB</span>
         </a>
         <div className="breadcrumb">
-          Workspace <ChevronRight size={13} />
-          <strong>Wearable evolution</strong>
+          <a href="/">All rooms</a> <ChevronRight size={13} />
+          <strong>{roomName}</strong>
           <span className="revision">r{project.revision}</span>
         </div>
         <div className="header-actions">
@@ -598,7 +598,8 @@ function App() {
           <div className="project-label">
             <Box size={17} />
             <div>
-              Wearable evolution<small>Shared mechanical design</small>
+              {roomName}
+              <small>Shared mechanical design</small>
             </div>
           </div>
           <label className="part-row" style={{ cursor: "pointer" }}>
@@ -1380,4 +1381,4 @@ function App() {
     </div>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(room ? <App /> : <Lobby />);

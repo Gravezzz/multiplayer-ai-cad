@@ -8,7 +8,39 @@ import {
   updateThreadJob,
 } from "../packages/protocol";
 import { z } from "zod";
-import type { Project, Job, LogEntry, Part } from "../packages/protocol";
+import type {
+  Project,
+  Job,
+  LogEntry,
+  Part,
+  RoomInfo,
+} from "../packages/protocol";
+
+export class RoomDirectory extends Actor {
+  @Persisted rooms: RoomInfo[] = [];
+  async list(): Promise<RoomInfo[]> {
+    return this.rooms;
+  }
+  async register(input: string): Promise<RoomInfo> {
+    const { id, name } = z
+      .object({
+        id: z.string().regex(/^[a-zA-Z0-9_-]{8,80}$/),
+        name: z.string().trim().min(1).max(80).optional(),
+      })
+      .parse(JSON.parse(input));
+    const existing = this.rooms.find((r) => r.id === id);
+    if (existing && (!name || name === existing.name)) return existing;
+    if (!existing && this.rooms.length >= 100)
+      throw new Error("Workspace limit: 100 rooms");
+    const room = {
+      id,
+      name: name ?? `Assembly ${id.slice(0, 6)}`,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+    };
+    this.rooms = [...this.rooms.filter((r) => r.id !== id), room];
+    return room;
+  }
+}
 
 export class ProjectActor extends Actor {
   @Persisted document: Project = initialProject();
