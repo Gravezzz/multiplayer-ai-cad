@@ -23,7 +23,7 @@ Terse Durable Actors: one authoritative ProjectActor per room; RoomDirectory for
 ## Required items
 
 - [ ] YouTube demo link, **two minutes maximum**. Verify the uploaded video plays while signed out. An unlisted link is suitable only if the submission form accepts it.
-- [ ] Public GitHub URL: https://github.com/Gravezzz/multiplayer-ai-cad
+- [x] Public GitHub URL: https://github.com/Gravezzz/multiplayer-ai-cad
 - [x] One-liner entered in the supplied submission screenshot; copy above matches it.
 - [ ] Save/submit the form and verify confirmation before **4:00 p.m. Pacific, October 31, 2026**.
 
