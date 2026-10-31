@@ -31,10 +31,14 @@ export class AssemblyClient {
       requestId,
     });
   }
-  startAgent(task: string) {
-    return this.request<{ id: string }>("/agents", {
+  createAgent(name: string) {
+    return this.request<Project>("/threads", { id: crypto.randomUUID(), name });
+  }
+  startAgent(task: string, threadId?: string) {
+    return this.request<{ id: string; threadId: string }>("/agents", {
       task,
       author: this.author,
+      threadId,
     });
   }
   mesh() {

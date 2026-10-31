@@ -1,12 +1,24 @@
 import { Actor, Persisted } from "terse-sdk/actor";
-import { initialProject, applyEdit, editSchema } from "../packages/protocol";
+import {
+  initialProject,
+  applyEdit,
+  editSchema,
+  projectThreads,
+  startThreadJob,
+  updateThreadJob,
+} from "../packages/protocol";
+import { z } from "zod";
 import type { Project, Job, LogEntry, Part } from "../packages/protocol";
 
 export class ProjectActor extends Actor {
   @Persisted document: Project = initialProject();
   @Persisted checkpoints: Part[][] = [];
   async snapshot(): Promise<Project> {
-    return { ...this.document, sequence: this.document.sequence ?? 0 };
+    return {
+      ...this.document,
+      sequence: this.document.sequence ?? 0,
+      threads: projectThreads(this.document),
+    };
   }
   async commit(
     input: string,
@@ -48,13 +60,35 @@ export class ProjectActor extends Actor {
   }
   async setJob(input: string): Promise<Project> {
     const job = JSON.parse(input) as Job;
+    this.document = updateThreadJob(this.document, job);
+    return this.document;
+  }
+  async createThread(input: string): Promise<Project> {
+    const { id, name } = z
+      .object({ id: z.string().uuid(), name: z.string().trim().min(1).max(60) })
+      .parse(JSON.parse(input));
+    const threads = projectThreads(this.document);
+    if (threads.some((t) => t.id === id)) return this.snapshot();
+    if (threads.length >= 30) throw new Error("Room limit: 30 agent threads");
     this.document = {
       ...this.document,
+      threads: [...threads, { id, name, messages: [] }],
       sequence: (this.document.sequence ?? 0) + 1,
-      jobs: [...this.document.jobs.filter((j) => j.id !== job.id), job].slice(
-        -30,
-      ),
     };
+    return this.document;
+  }
+  async startJob(input: string): Promise<Project> {
+    const job = z
+      .object({
+        id: z.string().uuid(),
+        threadId: z.string().min(1).max(100),
+        author: z.string().min(1).max(60),
+        task: z.string().min(1).max(8000),
+        status: z.literal("running"),
+        message: z.string(),
+      })
+      .parse(JSON.parse(input));
+    this.document = startThreadJob(this.document, job);
     return this.document;
   }
   async addActivity(input: string): Promise<Project> {

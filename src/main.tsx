@@ -1,4 +1,5 @@
-import React, { Suspense, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import Markdown from "react-markdown";
 import { createRoot } from "react-dom/client";
 import { Canvas, useLoader } from "@react-three/fiber";
 import {
@@ -30,8 +31,12 @@ import {
   Check,
   AlertCircle,
 } from "lucide-react";
-import { initialProject, partSchema } from "../packages/protocol";
-import type { Project, Part, Feature, Edit } from "../packages/protocol";
+import {
+  initialProject,
+  partSchema,
+  projectThreads,
+} from "../packages/protocol";
+import type { Project, Part, Feature, Edit, Job } from "../packages/protocol";
 import "./style.css";
 
 const params = new URLSearchParams(location.search);
@@ -261,8 +266,10 @@ function App() {
     [reference, setReference] = useState<"current" | "target" | "none">("none"),
     [ghost, setGhost] = useState(false),
     [reset, setReset] = useState(0);
-  const [task, setTask] = useState(""),
-    [agent, setAgent] = useState("Band designer"),
+  const [selectedAgent, setSelectedAgent] = useState(""),
+    [threadDrafts, setThreadDrafts] = useState<Record<string, string>>({}),
+    [addingAgent, setAddingAgent] = useState(false),
+    [newAgentName, setNewAgentName] = useState(""),
     [sending, setSending] = useState(false),
     [error, setError] = useState("");
   const [settings, setSettings] = useState(false),
@@ -283,6 +290,58 @@ function App() {
   });
   const [inspection, setInspection] = useState<any>(null);
   const [rawPart, setRawPart] = useState("");
+  const conversationEnd = useRef<HTMLDivElement>(null);
+  const threads = useMemo(() => projectThreads(project), [project]);
+  const activeThread =
+    threads.find((t) => t.id === selectedAgent) ?? threads[0];
+  const task = threadDrafts[activeThread?.id ?? ""] ?? "";
+  const setTask = (value: string) =>
+    setThreadDrafts((drafts) => ({
+      ...drafts,
+      [activeThread?.id ?? ""]: value,
+    }));
+  const latestJob = (threadId: string) =>
+    [...project.jobs]
+      .reverse()
+      .find((j) => (j.threadId ?? `legacy:${j.author}`) === threadId);
+  const activeJob = activeThread ? latestJob(activeThread.id) : undefined;
+  const jobLabel = (job?: Job) =>
+    !job
+      ? "Ready"
+      : job.status === "running"
+        ? "Working"
+        : job.status === "needs_reply"
+          ? "Needs reply"
+          : job.status === "error"
+            ? "Error"
+            : job.committed
+              ? "Changes saved"
+              : "Replied";
+  useEffect(() => {
+    conversationEnd.current?.scrollIntoView({ block: "end" });
+  }, [activeThread?.id, activeThread?.messages.length, activeJob?.status, tab]);
+  async function addAgent() {
+    if (!newAgentName.trim() || sending) return;
+    setSending(true);
+    try {
+      const id = crypto.randomUUID();
+      const state = await api<Project>(`${base}/threads`, {
+        method: "POST",
+        body: JSON.stringify({ id, name: newAgentName.trim() }),
+      });
+      setProject((current) =>
+        state.sequence >= current.sequence ? state : current,
+      );
+      setSelectedAgent(id);
+      setNewAgentName("");
+      setAddingAgent(false);
+      setTab("team");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSending(false);
+    }
+  }
   useEffect(() => {
     setRawPart(draft ? JSON.stringify(draft, null, 2) : "");
   }, [draft]);
@@ -338,15 +397,24 @@ function App() {
   const selectedPart = project.parts.find((p) => p.id === selected);
   const pending = project.jobs.filter((j) => j.status === "running").length;
   async function submitTask() {
-    if (!task.trim()) return;
+    if (
+      !task.trim() ||
+      !activeThread ||
+      activeJob?.status === "running" ||
+      sending ||
+      !connected ||
+      !configured
+    )
+      return;
+    const threadId = activeThread.id;
     setSending(true);
     setError("");
     try {
       await api(`${base}/agents`, {
         method: "POST",
-        body: JSON.stringify({ task, author: agent }),
+        body: JSON.stringify({ task, threadId }),
       });
-      setTask("");
+      setThreadDrafts((drafts) => ({ ...drafts, [threadId]: "" }));
       setTab("team");
     } catch (err) {
       setError((err as Error).message);
@@ -981,18 +1049,80 @@ function App() {
               Activity
             </button>
           </div>
+          {tab === "team" && (
+            <div className="thread-toolbar">
+              <div className="thread-toolbar-heading">
+                <span>YOUR AGENTS</span>
+                <button
+                  onClick={() => {
+                    setAddingAgent(!addingAgent);
+                    setNewAgentName(`Agent ${threads.length + 1}`);
+                  }}
+                  disabled={!connected}
+                >
+                  <Plus size={14} /> Add agent
+                </button>
+              </div>
+              {addingAgent && (
+                <form
+                  className="new-agent-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void addAgent();
+                  }}
+                >
+                  <input
+                    autoFocus
+                    aria-label="New agent name"
+                    value={newAgentName}
+                    maxLength={60}
+                    onChange={(e) => setNewAgentName(e.target.value)}
+                  />
+                  <button
+                    type="submit"
+                    disabled={sending || !newAgentName.trim()}
+                  >
+                    Create
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Cancel adding agent"
+                    onClick={() => setAddingAgent(false)}
+                  >
+                    <X size={14} />
+                  </button>
+                </form>
+              )}
+              <div className="agent-switcher" aria-label="Agent conversations">
+                {threads.map((thread) => {
+                  const job = latestJob(thread.id);
+                  return (
+                    <button
+                      key={thread.id}
+                      aria-pressed={thread.id === activeThread?.id}
+                      onClick={() => setSelectedAgent(thread.id)}
+                      className={`thread-choice ${thread.id === activeThread?.id ? "selected" : ""}`}
+                    >
+                      <span className="thread-choice-name">
+                        {job?.status === "running" ? (
+                          <LoaderCircle size={13} className="spin" />
+                        ) : (
+                          <span
+                            className={`status-dot ${job?.status ?? "ready"}`}
+                          />
+                        )}
+                        {thread.name}
+                      </span>
+                      <small className={job?.status}>{jobLabel(job)}</small>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div className="team-content">
             {tab === "team" ? (
               <>
-                <div className="team-intro">
-                  <div className="team-symbol">
-                    <Command size={23} />
-                  </div>
-                  <h2>Build together.</h2>
-                  <p>
-                    Give each teammate a task. Keep designing while they work.
-                  </p>
-                </div>
                 {!configured && (
                   <button
                     className="setup-callout"
@@ -1001,58 +1131,79 @@ function App() {
                     <Settings size={15} />
                     <span>
                       Connect your model
-                      <small>Add your hackathon API key to start.</small>
+                      <small>Add your API key to send a message.</small>
                     </span>
                     <ChevronRight size={16} />
                   </button>
                 )}
-                {project.jobs.length === 0 ? (
-                  <div className="suggestions">
-                    <span className="section-label">YOUR NEXT ITERATION</span>
+                {!activeThread ? (
+                  <div className="thread-empty">
+                    <Sparkles size={25} />
+                    <h2>A teammate for every idea.</h2>
+                    <p>
+                      Add an agent to start a conversation. Each agent can work
+                      on the shared assembly while you talk to another.
+                    </p>
                     <button
                       onClick={() => {
-                        setAgent("Band designer");
-                        setTask(
-                          "Modify the existing behind-head band into an over-head band, like headphones. Preserve the other existing components. Inspect the actual geometry and explain design assumptions.",
-                        );
+                        setAddingAgent(true);
+                        setNewAgentName("Agent 1");
                       }}
+                      disabled={!connected}
                     >
-                      01 <span>Move the band over the head</span>
-                      <Plus size={14} />
-                    </button>
-                    <button
-                      onClick={() => {
-                        setAgent("Electrode designer");
-                        setTask(
-                          "Design an under-chin electrode assembly: a curved or angled support arm, a small contact pad, and distinct silver electrode contacts. Inspect the existing band and coordinate the attachment position. Build separate editable parts for physically separate pieces. State fit assumptions.",
-                        );
-                      }}
-                    >
-                      02 <span>Add an under-chin electrode</span>
-                      <Plus size={14} />
+                      Add your first agent <Plus size={14} />
                     </button>
                   </div>
                 ) : (
-                  <div className="jobs">
-                    {[...project.jobs].reverse().map((job) => (
-                      <article className={`job ${job.status}`} key={job.id}>
-                        <div className="job-heading">
-                          <span className="agent-avatar">
-                            {job.author.slice(0, 1)}
-                          </span>
-                          <strong>{job.author}</strong>
-                          {job.status === "running" ? (
-                            <LoaderCircle size={14} className="spin" />
-                          ) : job.status === "complete" ? (
-                            <Check size={14} />
-                          ) : (
-                            <AlertCircle size={14} />
-                          )}
+                  <div
+                    className="conversation"
+                    aria-label={`Conversation with ${activeThread.name}`}
+                  >
+                    {!activeThread.messages.length && (
+                      <div className="thread-empty">
+                        <h2>Meet {activeThread.name}.</h2>
+                        <p>
+                          Give this agent a task. You can answer questions and
+                          refine the design right here.
+                        </p>
+                      </div>
+                    )}
+                    {activeThread.messages.map((message) => (
+                      <article
+                        key={message.id}
+                        className={`chat-message ${message.role}`}
+                      >
+                        <div className="message-author">
+                          {message.role === "user" ? "You" : activeThread.name}
                         </div>
-                        <p className="job-task">{job.task}</p>
-                        <div className="job-state">{job.message}</div>
+                        <div className="message-body">
+                          <Markdown>{message.text}</Markdown>
+                        </div>
                       </article>
                     ))}
+                    {activeJob?.status === "running" && (
+                      <div className="agent-progress" role="status">
+                        <LoaderCircle size={14} className="spin" />
+                        <span>{activeJob.message}</span>
+                      </div>
+                    )}
+                    {activeJob?.status === "needs_reply" && (
+                      <div className="reply-notice">
+                        Your reply is needed to continue.
+                      </div>
+                    )}
+                    {activeJob?.status === "complete" &&
+                      activeJob.committed === false && (
+                        <div className="turn-note">
+                          No geometry changes in this turn.
+                        </div>
+                      )}
+                    {activeJob?.status === "error" && (
+                      <div className="reply-notice error">
+                        This run stopped. You can send a follow-up below.
+                      </div>
+                    )}
+                    <div ref={conversationEnd} />
                   </div>
                 )}
               </>
@@ -1091,44 +1242,56 @@ function App() {
               </div>
             )}
           </div>
-          <div className="composer">
-            <div className="composer-top">
-              <span className="agent-dot" />
-              <select
-                aria-label="Agent role"
-                value={agent}
-                onChange={(e) => setAgent(e.target.value)}
-              >
-                <option>Band designer</option>
-                <option>Electrode designer</option>
-                <option>Mechanical designer</option>
-              </select>
-              <span>{configured ? "Model connected" : "Setup needed"}</span>
+          {tab === "team" && activeThread && (
+            <div className="composer">
+              <div className="composer-top">
+                <span className="agent-dot" />
+                <strong>{activeThread.name}</strong>
+                <span>{configured ? "Model connected" : "Setup needed"}</span>
+              </div>
+              <textarea
+                placeholder={
+                  activeJob?.status === "needs_reply"
+                    ? `Reply to ${activeThread.name}`
+                    : `Message ${activeThread.name}`
+                }
+                aria-label="Message agent"
+                value={task}
+                onChange={(e) => setTask(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    void submitTask();
+                  }
+                }}
+              />
+              <div className="composer-bottom">
+                <small>
+                  {activeJob?.status === "running"
+                    ? "Working. You can draft your next message."
+                    : "Same conversation, shared assembly"}
+                </small>
+                <button
+                  title="Send message"
+                  aria-label="Send message"
+                  disabled={
+                    !task.trim() ||
+                    sending ||
+                    !connected ||
+                    !configured ||
+                    activeJob?.status === "running"
+                  }
+                  onClick={submitTask}
+                >
+                  {sending ? (
+                    <LoaderCircle size={16} className="spin" />
+                  ) : (
+                    <Send size={16} />
+                  )}
+                </button>
+              </div>
             </div>
-            <textarea
-              placeholder="Describe a design change…"
-              aria-label="Agent task"
-              value={task}
-              onChange={(e) => setTask(e.target.value)}
-              onKeyDown={(e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submitTask();
-              }}
-            />
-            <div className="composer-bottom">
-              <small>Works on the shared assembly</small>
-              <button
-                title="Start agent"
-                disabled={!task.trim() || sending || !connected || !configured}
-                onClick={submitTask}
-              >
-                {sending ? (
-                  <LoaderCircle size={16} className="spin" />
-                ) : (
-                  <Send size={16} />
-                )}
-              </button>
-            </div>
-          </div>
+          )}
           <div className="team-footer">
             Shared workspace · accepted changes saved automatically
           </div>

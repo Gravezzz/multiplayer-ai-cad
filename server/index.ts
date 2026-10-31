@@ -230,6 +230,15 @@ app.get("/api/rooms/:room/export.step", async (req, res) => {
   );
   res.send(Buffer.from(bytes));
 });
+app.post("/api/rooms/:room/threads", async (req, res) => {
+  const body = z
+    .object({ id: z.string().uuid(), name: z.string().trim().min(1).max(60) })
+    .parse(req.body);
+  const room = roomOf(req);
+  const state = await invoke(room, "createThread", [JSON.stringify(body)]);
+  broadcast(room, state);
+  res.json(state);
+});
 app.post("/api/rooms/:room/agents", async (req, res) => {
   if (!config.apiKey) {
     res
@@ -241,23 +250,40 @@ app.post("/api/rooms/:room/agents", async (req, res) => {
     body = z
       .object({
         task: z.string().min(1).max(8000),
-        author: z.string().min(1).max(60),
+        author: z.string().min(1).max(60).optional(),
+        threadId: z.string().min(1).max(100).optional(),
       })
       .parse(req.body);
-  const state = await snapshot(room);
-  if (state.jobs.filter((j) => j.status === "running").length >= 4) {
-    res.status(409).json({ error: "At most four agent runs at once" });
-    return;
+  let state = await snapshot(room);
+  // Existing SDK callers may omit a thread; give each such run its own conversation.
+  if (!body.threadId) {
+    body.threadId = randomUUID();
+    state = await invoke(room, "createThread", [
+      JSON.stringify({ id: body.threadId, name: body.author || "Agent" }),
+    ]);
   }
+  const thread = state.threads?.find((t) => t.id === body.threadId);
+  if (!thread) throw new Error("Unknown agent thread");
+  const agentName = thread.name;
   const id = randomUUID();
   const job = async (value: Job) => {
     const state = await invoke(room, "setJob", [JSON.stringify(value)]);
     broadcast(room, state);
   };
-  await job({ id, ...body, status: "running", message: "Starting model run" });
+  const started = await invoke(room, "startJob", [
+    JSON.stringify({
+      id,
+      threadId: thread.id,
+      author: agentName,
+      task: body.task,
+      status: "running",
+      message: "Starting model run",
+    }),
+  ]);
+  broadcast(room, started);
   void runAgent(
     body.task,
-    body.author,
+    agentName,
     id,
     { ...config },
     {
@@ -299,7 +325,7 @@ app.post("/api/rooms/:room/agents", async (req, res) => {
       },
       preview: async (edit) => {
         const state = await snapshot(room);
-        const candidate = applyEdit(state, edit, body.author, randomUUID());
+        const candidate = applyEdit(state, edit, agentName, randomUUID());
         return {
           baseRevision: state.revision,
           changedPartIds: edit.upsertParts.map((p) => p.id),
@@ -325,8 +351,10 @@ app.post("/api/rooms/:room/agents", async (req, res) => {
       job,
       activity: (author, text, kind) => activity(room, author, text, kind),
     },
+    started.threads!.find((t) => t.id === thread.id)!.messages.slice(0, -1),
+    thread.id,
   ).catch((error) => console.error("Agent persistence error:", error.message));
-  res.status(202).json({ id });
+  res.status(202).json({ id, threadId: thread.id });
 });
 app.use(
   (

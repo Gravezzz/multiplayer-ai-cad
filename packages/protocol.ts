@@ -92,8 +92,20 @@ export type Job = {
   id: string;
   author: string;
   task: string;
-  status: "running" | "complete" | "error";
+  status: "running" | "complete" | "needs_reply" | "error";
   message: string;
+  threadId?: string;
+  committed?: boolean;
+};
+export type ThreadMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+};
+export type AgentThread = {
+  id: string;
+  name: string;
+  messages: ThreadMessage[];
 };
 export type Project = {
   revision: number;
@@ -102,6 +114,7 @@ export type Project = {
   history: LogEntry[];
   requests: string[];
   jobs: Job[];
+  threads?: AgentThread[];
 };
 export const initialProject = (): Project => ({
   revision: 0,
@@ -110,7 +123,85 @@ export const initialProject = (): Project => ({
   history: [],
   requests: [],
   jobs: [],
+  threads: [],
 });
+
+// Preserve existing conversations by their explicit author identity; no text/intent classification.
+export function projectThreads(project: Project): AgentThread[] {
+  const threads = structuredClone(project.threads ?? []);
+  for (const job of project.jobs.filter((j) => !j.threadId)) {
+    const id = `legacy:${job.author}`;
+    let thread = threads.find((t) => t.id === id);
+    if (!thread) {
+      thread = { id, name: job.author, messages: [] };
+      threads.push(thread);
+    }
+    if (!thread.messages.some((m) => m.id === `${job.id}:user`))
+      thread.messages.push({
+        id: `${job.id}:user`,
+        role: "user",
+        text: job.task,
+      });
+    if (
+      job.status !== "running" &&
+      !thread.messages.some((m) => m.id === `${job.id}:assistant`)
+    )
+      thread.messages.push({
+        id: `${job.id}:assistant`,
+        role: "assistant",
+        text: job.message,
+      });
+  }
+  return threads;
+}
+
+export function startThreadJob(project: Project, job: Job): Project {
+  const threads = projectThreads(project);
+  const thread = threads.find((t) => t.id === job.threadId);
+  if (!thread) throw new Error("Unknown agent thread");
+  if (
+    project.jobs.some(
+      (j) =>
+        j.status === "running" &&
+        (j.threadId ?? `legacy:${j.author}`) === thread.id,
+    )
+  )
+    throw new Error("This agent is still working. Wait for its reply.");
+  if (project.jobs.filter((j) => j.status === "running").length >= 4)
+    throw new Error("At most four agents can work at once");
+  if (thread.messages.length >= 200)
+    throw new Error(
+      "This conversation is full. Add an agent to start a new thread.",
+    );
+  thread.messages.push({ id: `${job.id}:user`, role: "user", text: job.task });
+  return {
+    ...project,
+    threads,
+    jobs: [...project.jobs, job],
+    sequence: project.sequence + 1,
+  };
+}
+
+export function updateThreadJob(project: Project, job: Job): Project {
+  const threads = projectThreads(project);
+  const thread = threads.find((t) => t.id === job.threadId);
+  if (thread && job.status !== "running") {
+    const message = {
+      id: `${job.id}:assistant`,
+      role: "assistant" as const,
+      text: job.message,
+    };
+    const previous = thread.messages.findIndex((m) => m.id === message.id);
+    if (previous < 0) thread.messages.push(message);
+    else thread.messages[previous] = message;
+  }
+  return {
+    ...project,
+    threads,
+    jobs: [...project.jobs.filter((j) => j.id !== job.id), job],
+    sequence: project.sequence + 1,
+  };
+}
 
 export function applyEdit(
   project: Project,
