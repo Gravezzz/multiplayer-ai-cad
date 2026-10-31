@@ -6,5 +6,6 @@ dist/
 *.log
 .terse/
 .terse-persistence-test/
+.cad-assets/
 .DS_Store
 coverage/

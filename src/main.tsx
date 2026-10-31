@@ -258,9 +258,7 @@ function App() {
     [meshRevision, setMeshRevision] = useState(-1),
     [meshError, setMeshError] = useState("");
   const [selected, setSelected] = useState<string | null>(null),
-    [reference, setReference] = useState<"current" | "target" | "none">(
-      "current",
-    ),
+    [reference, setReference] = useState<"current" | "target" | "none">("none"),
     [ghost, setGhost] = useState(false),
     [reset, setReset] = useState(0);
   const [task, setTask] = useState(""),
@@ -277,6 +275,17 @@ function App() {
     [draft, setDraft] = useState<Part | null>(null),
     [draftRevision, setDraftRevision] = useState(0),
     [saving, setSaving] = useState(false);
+  const [transform, setTransform] = useState({
+    vector: [0, 0, 0],
+    angle: 0,
+    axis: [0, 0, 1],
+    origin: [0, 0, 0],
+  });
+  const [inspection, setInspection] = useState<any>(null);
+  const [rawPart, setRawPart] = useState("");
+  useEffect(() => {
+    setRawPart(draft ? JSON.stringify(draft, null, 2) : "");
+  }, [draft]);
   useEffect(() => {
     api<{ providerConfigured: boolean; model: string; baseUrl: string }>(
       "/api/health",
@@ -324,6 +333,7 @@ function App() {
     const part = project.parts.find((p) => p.id === selected);
     setDraft(part ? structuredClone(part) : null);
     setDraftRevision(project.revision);
+    setInspection(null);
   }, [selected]);
   const selectedPart = project.parts.find((p) => p.id === selected);
   const pending = project.jobs.filter((j) => j.status === "running").length;
@@ -352,12 +362,38 @@ function App() {
         method: "POST",
         body: JSON.stringify({ edit, author, requestId: crypto.randomUUID() }),
       });
-      setProject(state);
+      setProject((current) =>
+        state.sequence >= current.sequence ? state : current,
+      );
       setDraftRevision(state.revision);
       return true;
     } catch (err) {
       setError((err as Error).message);
       return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function importFile(file: File) {
+    setSaving(true);
+    setError("");
+    try {
+      const result = await api<{ state: Project }>(`${base}/import-step`, {
+        method: "POST",
+        body: JSON.stringify({
+          text: await file.text(),
+          fileName: file.name,
+          baseRevision: project.revision,
+          author,
+        }),
+      });
+      setProject((current) =>
+        result.state.sequence >= current.sequence ? result.state : current,
+      );
+      setReference("none");
+      setSelected(null);
+    } catch (err) {
+      setError((err as Error).message);
     } finally {
       setSaving(false);
     }
@@ -420,6 +456,34 @@ function App() {
           <span className="revision">r{project.revision}</span>
         </div>
         <div className="header-actions">
+          <button
+            disabled={saving || !connected || !project.revision}
+            title="Undo last shared geometry edit"
+            onClick={async () => {
+              setSaving(true);
+              setError("");
+              try {
+                const state = await api<Project>(`${base}/undo`, {
+                  method: "POST",
+                  body: JSON.stringify({
+                    baseRevision: project.revision,
+                    author,
+                    requestId: crypto.randomUUID(),
+                  }),
+                });
+                setProject((current) =>
+                  state.sequence >= current.sequence ? state : current,
+                );
+                setSelected(null);
+              } catch (err) {
+                setError((err as Error).message);
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            Undo
+          </button>
           <span className={`connection ${connected ? "online" : ""}`}>
             <i />
             {connected ? "Live project" : "Connecting to Terse"}
@@ -469,6 +533,25 @@ function App() {
               Wearable evolution<small>Shared mechanical design</small>
             </div>
           </div>
+          <label className="part-row" style={{ cursor: "pointer" }}>
+            <Plus size={16} />
+            <span>
+              {saving ? "Validating geometry…" : "Import STEP"}
+              <small>Editable solid bodies</small>
+            </span>
+            <input
+              aria-label="Import STEP"
+              type="file"
+              accept=".step,.stp"
+              disabled={saving || !connected}
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void importFile(file);
+                e.target.value = "";
+              }}
+            />
+          </label>
           <div className="section-label">REFERENCE GEOMETRY</div>
           <button
             className={`part-row ${reference === "current" ? "active" : ""}`}
@@ -521,8 +604,9 @@ function App() {
                 <span>
                   {part.name}
                   <small>
-                    {part.features.length} feature
-                    {part.features.length === 1 ? "" : "s"}
+                    {part.source ? "STEP solid · " : ""}
+                    {part.features.length + (part.operations?.length || 0)}{" "}
+                    edits
                   </small>
                 </span>
               </button>
@@ -615,9 +699,13 @@ function App() {
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
               />
               <div className="inspector-meta">
-                {draft.features[0].kind} · {draft.features.length} feature(s)
+                {draft.source
+                  ? `STEP solid · ${draft.source.bodyName}`
+                  : draft.features[0]?.kind}{" "}
+                · {draft.features.length} features ·{" "}
+                {draft.operations?.length || 0} operations
               </div>
-              {draft.features[0].kind === "arc" && (
+              {draft.features[0]?.kind === "arc" && (
                 <>
                   <label>
                     Outer radius{" "}
@@ -641,7 +729,7 @@ function App() {
                   </label>
                 </>
               )}
-              {draft.features[0].kind === "cylinder" && (
+              {draft.features[0]?.kind === "cylinder" && (
                 <label>
                   Radius{" "}
                   <input
@@ -653,46 +741,167 @@ function App() {
                   />
                 </label>
               )}
-              {["size", "position", "rotation"].map((field) => (
-                <div className="vector-field" key={field}>
-                  <span>
-                    {field === "size"
-                      ? "Size / depth"
-                      : field === "position"
-                        ? "Position"
-                        : "Rotation °"}
-                  </span>
-                  <div>
-                    {draft.features[0][
-                      field as "size" | "position" | "rotation"
-                    ].map((v, i) => (
-                      <label key={i}>
-                        {["X", "Y", "Z"][i]}
-                        <input
-                          aria-label={`${field} ${["X", "Y", "Z"][i]}`}
-                          type="number"
-                          value={v}
-                          onChange={(e) => {
-                            const values = [
-                              ...draft.features[0][
-                                field as "size" | "position" | "rotation"
-                              ],
-                            ];
-                            values[i] = Number(e.target.value);
-                            changeFeature(field as keyof Feature, values);
-                          }}
-                        />
-                      </label>
-                    ))}
+              {draft.features.length > 0 &&
+                ["size", "position", "rotation"].map((field) => (
+                  <div className="vector-field" key={field}>
+                    <span>
+                      {field === "size"
+                        ? "Size / depth"
+                        : field === "position"
+                          ? "Position"
+                          : "Rotation °"}
+                    </span>
+                    <div>
+                      {draft.features[0][
+                        field as "size" | "position" | "rotation"
+                      ].map((v, i) => (
+                        <label key={i}>
+                          {["X", "Y", "Z"][i]}
+                          <input
+                            aria-label={`${field} ${["X", "Y", "Z"][i]}`}
+                            type="number"
+                            value={v}
+                            onChange={(e) => {
+                              const values = [
+                                ...draft.features[0][
+                                  field as "size" | "position" | "rotation"
+                                ],
+                              ];
+                              values[i] = Number(e.target.value);
+                              changeFeature(field as keyof Feature, values);
+                            }}
+                          />
+                        </label>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
               <details>
-                <summary>Feature specification</summary>
+                <summary>Move / rotate body</summary>
+                {["vector", "axis", "origin"].map((field) => (
+                  <div className="vector-field" key={field}>
+                    <span>
+                      {field === "vector"
+                        ? "Translation (mm)"
+                        : field === "axis"
+                          ? "Rotation axis"
+                          : "Rotation origin"}
+                    </span>
+                    <div>
+                      {transform[field as "vector" | "axis" | "origin"].map(
+                        (value, i) => (
+                          <label key={i}>
+                            {["X", "Y", "Z"][i]}
+                            <input
+                              type="number"
+                              aria-label={`${field} ${["X", "Y", "Z"][i]}`}
+                              value={value}
+                              onChange={(e) => {
+                                const values = [
+                                  ...transform[
+                                    field as "vector" | "axis" | "origin"
+                                  ],
+                                ];
+                                values[i] = Number(e.target.value);
+                                setTransform({ ...transform, [field]: values });
+                              }}
+                            />
+                          </label>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                ))}
+                <label>
+                  Angle °
+                  <input
+                    type="number"
+                    value={transform.angle}
+                    onChange={(e) =>
+                      setTransform({
+                        ...transform,
+                        angle: Number(e.target.value),
+                      })
+                    }
+                  />
+                </label>
+                <div className="inspector-actions">
+                  <button
+                    onClick={() =>
+                      setDraft({
+                        ...draft,
+                        operations: [
+                          ...(draft.operations || []),
+                          {
+                            type: "translate",
+                            vector: transform.vector as [
+                              number,
+                              number,
+                              number,
+                            ],
+                          },
+                        ],
+                      })
+                    }
+                  >
+                    Stage move
+                  </button>
+                  <button
+                    onClick={() =>
+                      setDraft({
+                        ...draft,
+                        operations: [
+                          ...(draft.operations || []),
+                          {
+                            type: "rotate",
+                            angle: transform.angle,
+                            axis: transform.axis as [number, number, number],
+                            origin: transform.origin as [
+                              number,
+                              number,
+                              number,
+                            ],
+                          },
+                        ],
+                      })
+                    }
+                  >
+                    Stage rotation
+                  </button>
+                </div>
+                <small>
+                  Stages an operation. Apply change commits it to everyone.
+                </small>
+              </details>
+              <details>
+                <summary>Geometry inspection</summary>
+                <button
+                  onClick={async () => {
+                    try {
+                      setInspection(
+                        await api(`${base}/parts/${selectedPart.id}/inspect`),
+                      );
+                    } catch (err) {
+                      setError((err as Error).message);
+                    }
+                  }}
+                >
+                  Inspect accepted body
+                </button>
+                {inspection && (
+                  <pre
+                    style={{ maxHeight: 180, overflow: "auto", fontSize: 10 }}
+                  >
+                    {JSON.stringify(inspection, null, 2)}
+                  </pre>
+                )}
+              </details>
+              <details>
+                <summary>CAD specification</summary>
                 <textarea
                   aria-label="Feature JSON"
-                  key={`${selected}-${draftRevision}`}
-                  defaultValue={JSON.stringify(draft, null, 2)}
+                  value={rawPart}
+                  onChange={(e) => setRawPart(e.target.value)}
                   onBlur={(e) => {
                     try {
                       setDraft(partSchema.parse(JSON.parse(e.target.value)));
@@ -804,7 +1013,7 @@ function App() {
                       onClick={() => {
                         setAgent("Band designer");
                         setTask(
-                          "Design an editable over-head band to replace the behind-head band concept. Use a curved band across XZ with a comfortable-looking broad strap and side mounting tabs. Preserve space for the electrode assembly. Explain assumed dimensions.",
+                          "Modify the existing behind-head band into an over-head band, like headphones. Preserve the other existing components. Inspect the actual geometry and explain design assumptions.",
                         );
                       }}
                     >

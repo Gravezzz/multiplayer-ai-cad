@@ -6,8 +6,8 @@ export const vector = z.tuple([
   z.number().finite(),
 ]);
 export const featureSchema = z.object({
-  kind: z.enum(["box", "cylinder", "arc"]),
-  operation: z.enum(["add", "cut"]),
+  kind: z.enum(["box", "cylinder", "arc", "sphere", "polygon"]),
+  operation: z.enum(["add", "cut", "intersect"]),
   position: vector,
   rotation: vector,
   size: vector,
@@ -15,18 +15,68 @@ export const featureSchema = z.object({
   thickness: z.number().min(0).max(100),
   startAngle: z.number().min(-360).max(360),
   endAngle: z.number().min(-360).max(360),
+  points: z
+    .array(z.tuple([z.number().finite(), z.number().finite()]))
+    .min(3)
+    .max(100)
+    .optional(),
 });
+export const operationSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("translate"), vector }),
+  z.object({
+    type: z.literal("rotate"),
+    angle: z.number().finite(),
+    axis: vector,
+    origin: vector,
+  }),
+  z.object({
+    type: z.literal("scale"),
+    factor: z.number().positive().max(100),
+    origin: vector,
+  }),
+  z.object({
+    type: z.literal("fillet"),
+    radius: z.number().positive().max(100),
+    edgeIndices: z.array(z.number().int().min(0)).max(300),
+  }),
+  z.object({
+    type: z.literal("chamfer"),
+    radius: z.number().positive().max(100),
+    edgeIndices: z.array(z.number().int().min(0)).max(300),
+  }),
+  z.object({
+    type: z.literal("shell"),
+    thickness: z.number().finite(),
+    faceIndices: z.array(z.number().int().min(0)).min(1).max(100),
+  }),
+  z.object({
+    type: z.literal("clip"),
+    normal: vector,
+    origin: vector,
+    keep: z.enum(["positive", "negative"]),
+  }),
+  z.object({ type: z.literal("boolean"), feature: featureSchema }),
+]);
 export const partSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
   name: z.string().min(1).max(100),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-  features: z.array(featureSchema).min(1).max(32),
+  features: z.array(featureSchema).max(64),
+  source: z
+    .object({
+      assetId: z.string().regex(/^[a-f0-9]{64}$/),
+      fileName: z.string().max(200),
+      bodyName: z.string().max(200),
+      bodyIndex: z.number().int().min(0),
+    })
+    .optional(),
+  operations: z.array(operationSchema).max(100).optional(),
 });
 export const editSchema = z.object({
   baseRevision: z.number().int().min(0),
   summary: z.string().min(1).max(1000),
-  upsertParts: z.array(partSchema).max(16),
-  removePartIds: z.array(z.string()).max(16),
+  upsertParts: z.array(partSchema).max(100),
+  removePartIds: z.array(z.string()).max(100),
 });
 export type Part = z.infer<typeof partSchema>;
 export type Feature = z.infer<typeof featureSchema>;
@@ -90,7 +140,7 @@ export function applyEdit(
     ...project.parts.filter((p) => !replaced.has(p.id)),
     ...edit.upsertParts,
   ];
-  if (parts.length > 40) throw new Error("Project limit: 40 editable parts");
+  if (parts.length > 100) throw new Error("Project limit: 100 editable parts");
   return {
     ...project,
     revision: project.revision + 1,
@@ -110,5 +160,6 @@ export function applyEdit(
   };
 }
 
-export const geometryHelp = `Units mm. World coordinates: X left/right, Y front/back, Z up. Origin is near the center of the head. Imported meshes are references and cannot be edited with these tools. Create new editable solids rather than claim to change the reference.
-Each part combines features in order. First feature MUST be add. box size=[width X,depth Y,height Z], centered at origin before transforms. cylinder radius and size[2]=height, along Z centered about origin. arc is an annular circular sector in XY, radius=outer radius, thickness=radial band thickness, size[2]=extrusion width, startAngle/endAngle in degrees CCW; arc span must be >0 and <=180. It starts centered on Z before transforms. rotation=[X,Y,Z] degrees applied in that order about global origin; position translation is applied last. Use rotation [90,0,0] to put an XY arc in XZ for an over-head band. All dimensions must be positive where used. Unused numeric fields should be zero. Each subsequent add is fused; cut is subtracted. Keep each physically disconnected item as a separate part. Colors #RRGGBB. For electrodes, create a supporting pad and separate silver cylinders for contacts. Stable part IDs allow targeted replacement. Read current parts before changing attachments; do not overwrite unrelated parts. Generated geometry is a mechanical concept, not a validated medical device.`;
+export const geometryHelp = `CAD SDK, units millimeters, Z up. Read current geometry; do not assume anatomical axes or dimensions. Imported STEP parts have immutable exact BRep source assets and can be edited with features and operations. source.assetId references a real imported solid; preserve it for edits to existing geometry. Never invent asset IDs. To replace an entire body with newly constructed geometry, keep its part ID and omit source explicitly. Preserve all unrelated part records.
+Evaluation: load source (if present), apply features in order, then operations in order. Without source the first feature must add a solid. box size=[X,Y,Z], centered at local origin. cylinder radius and size[2]=height, along local Z centered at origin. sphere radius, centered at origin. polygon points are XY vertices of a closed planar profile, extruded by size[2] and centered along Z. arc is an annular sector in XY: radius=outer radius, thickness=radial thickness, size[2]=extrusion depth, startAngle/endAngle in degrees CCW (span >0 and <=180). Feature rotation [X,Y,Z] degrees applies in that order about the origin, then position translation. Positive dimensions where used; unused scalar fields zero. Features combine via add (union), cut (difference), or intersect.
+Operations: translate by vector; rotate by angle degrees about arbitrary axis through origin; scale uniformly about origin; fillet/chamfer specified edgeIndices (empty means all edges); shell removes specified faceIndices with signed thickness; clip keeps one half of a plane through origin with normal; boolean appends a transformed primitive operation in current world coordinates. Use inspect_part to get exact edge/face indices at the current revision. Indices are scoped to the current geometry; inspect again after topology changes. Keep each disconnected component as a separate part. Use preview_design to validate and inspect a candidate before committing. Geometric measurements do not establish manufacturing suitability, ergonomic fit, or electrical performance.`;

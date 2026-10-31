@@ -40,6 +40,26 @@ export class AssemblyClient {
   mesh() {
     return this.request<{ revision: number; meshes: unknown[] }>("/meshes");
   }
+  importSTEP(text: string, fileName: string, baseRevision: number) {
+    return this.request<{ state: Project }>("/import-step", {
+      text,
+      fileName,
+      baseRevision,
+      author: this.author,
+    });
+  }
+  inspectPart(partId: string) {
+    return this.request<unknown>(
+      `/parts/${encodeURIComponent(partId)}/inspect`,
+    );
+  }
+  undo(baseRevision: number) {
+    return this.request<Project>("/undo", {
+      baseRevision,
+      author: this.author,
+      requestId: crypto.randomUUID(),
+    });
+  }
   get stepURL() {
     return `${this.origin}/api/rooms/${encodeURIComponent(this.room)}/export.step`;
   }

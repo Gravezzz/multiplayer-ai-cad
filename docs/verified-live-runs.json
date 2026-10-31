@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-31T20:43:53.427Z",
+  "bandTest": {
+    "room": "band-agent-check-65c24173e440",
+    "unchangedOtherBodies": 7,
+    "sourcePreserved": true,
+    "newBodies": 0,
+    "jobs": [
+      {
+        "author": "Band designer",
+        "id": "20195223-1843-44a6-b177-3cee8c3e8387",
+        "message": "Done—only the band was changed to an upright, over-the-head headphone-style arch. I retained its original curved channel and rebuilt the band’s offset end connection.\n\nAll seven other parts remain unchanged. Some previously band-supported features are now separated from it because they were left fixed as requested. Fit and structural performance have not been validated.",
+        "status": "complete",
+        "task": "Can you move the band in our wearable to an over-the-head band instead, so it looks like over-the-head headphones and is a familiar form factor? Preserve all other parts. Only work on the band."
+      }
+    ]
+  },
+  "parallelTest": {
+    "room": "parallel-check-54dfd428",
+    "bothEditsPreserved": true,
+    "unrelatedBodiesPreserved": 6,
+    "conflict": [
+      {
+        "at": "2026-10-31T20:42:03.871Z",
+        "author": "Front teammate",
+        "id": "c3e7b38a-c93f-44df-a1a1-7a2e03e7d507",
+        "kind": "conflict",
+        "text": "STALE_REVISION: proposal used 1; current revision is 2. Read the latest assembly and regenerate your proposal."
+      }
+    ],
+    "jobs": [
+      {
+        "author": "Module teammate",
+        "id": "4b58f0cb-f37c-41c0-b3dc-a958379f1d26",
+        "message": "Inspected, previewed, and committed at revision 2.\n\nOnly `Ref_module` was translated by **[0, 0, 2] mm in world coordinates**. Its exact STEP source and shape were preserved; all other bodies remain unchanged.",
+        "status": "complete",
+        "task": "Translate only the existing Ref_module body by [0,0,2] mm in world coordinates. Keep its exact STEP source and all other geometry intact. Inspect, preview, and commit the change."
+      },
+      {
+        "author": "Front teammate",
+        "id": "97cdec2b-2ba0-41ff-9f69-88459e2b3612",
+        "message": "Inspected, previewed, and committed at revision 3.\n\n- Translated only **Front_Right** by **[3, 0, 0] mm** in world coordinates.\n- Preserved its exact STEP source and shape.\n- Left all other bodies intact, including the concurrent Ref_module edit.",
+        "status": "complete",
+        "task": "Translate only the existing Front_Right body by [3,0,0] mm in world coordinates. Keep its exact STEP source and all other geometry intact. Inspect, preview, and commit the change."
+      }
+    ]
+  }
+}

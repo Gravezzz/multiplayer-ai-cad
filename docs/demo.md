@@ -1,52 +1,33 @@
-# Demo and build schedule
+# Demo: real collaborative edits to an existing device
 
-## Updated wearable demo (implemented direction)
+Start in `wearable-editable-2026`. This room contains eight editable solids imported from the user's STEP export. The previous `wearable-demo-2026` room is preserved separately and contains the earlier generated design.
 
-The user supplied current-prototype STL and a target Fusion/STL design. Use the physical wearable as the opening prop. The new application is the CAD workspace, separate from Engram.
+1. Show the physical wearable and its eight-body STEP model. Explain that the product is a shared CAD editor; Engram supplies the example device.
+2. Ask one teammate: “Modify the existing behind-head band into an over-head band, like headphones. Preserve the other existing components. Inspect the actual geometry and explain design assumptions.”
+3. Separately ask the second teammate to add the under-chin electrode support and distinct contact pads. This intent must come from the user; it is not injected into band requests.
+4. Make a human change using a selected body's Move / rotate controls. Stage the operation, then Apply change. Watch the other browser update. If a stale proposal occurs, the model receives the error, re-reads the current design, and decides how to revise it.
+5. Inspect the resulting bodies and the agent's stated limitations. Original band-mounted hooks may need a follow-up attachment task after the band moves. Do not describe detached parts as a finished assembly.
+6. Show Undo, reload the second session, and export STEP. Explain that Terse serializes and persists accepted design edits; it does not decide mechanically correct geometry. The model plans changes using the CAD tools.
 
-1. Show the current prototype reference in the browser and the wearable in hand. Explain: “I want to move this band over the head and add an under-chin electrode.”
-2. Start the Band designer with the over-head-band task. Before it finishes, start the Electrode designer with the contact pad and support-arm task. Both use real model calls.
-3. Show the target reference briefly, then inspect generated editable components. Turn off the imported reference to see the replacement design clearly. Do not imply the STL's feature history was edited.
-4. Change a generated band's radius or a mount position as a human while another agent is working. Observe the actual outcome; do not manufacture a conflict. If a proposal is stale, its error appears in Activity and returns to the model for repair.
-5. Show the same accepted components in a second browser session, reload, and export the new solids as STEP.
+## Actual test evidence
 
-The app provides read/measure/commit tools, a human feature inspector, explicit geometry validation, and version guards. It does not yet provide a full sketch solver, Fusion feature import, medical/electrical validation, or automatically recovered model jobs. Live AI results must be tested after credentials are entered. The older enclosure script below records the initial concept and is superseded by this wearable scenario.
+The band-only run in `band-agent-check-65c24173e440` retained the original band asset and applied rotation, plane clipping, an additive box, and a subtractive box. It changed only that body, kept the other seven body records identical, and added no electrode. Its final message disclosed detached features and unvalidated fit. This is a real recorded model run, not a replay or preset.
+
+The source import test checks eight named solids, direct transform volume preservation, and eight-body STEP re-import. The integration test checks unchanged bodies' geometric arrays, stale-revision rejection, shared undo, and export. The kernel checks also exercise fillet, chamfer, shell, clip, cylinder cut, polygon extrusion, sphere, rotation, scale, and minimum distance.
+
+The live two-agent run in `parallel-check-54dfd428` produced a natural stale-revision conflict. The second agent re-read the assembly and committed its independent body translation while preserving the first translation. Final body records were checked against the original, including all six unrelated bodies.
 
 ## Pitch
 
-“Hardware teams don't design one part at a time. They change connected parts together. We're building a shared CAD workspace where AI teammates coordinate those changes alongside you.”
+“Hardware teams change connected parts together. We're building a shared CAD workspace where you and AI teammates can edit the real design at the same time, with durable state and explicit conflict handling.”
 
-Initial customer hypothesis: small hardware and robotics teams iterating enclosures, fixtures, and mounts. Start with the repetitive redesign caused by changing boards or components. Pricing and willingness to pay remain unvalidated. Multiplayer alone is not the business claim; reduced coordination and redesign effort is the hypothesis to test.
+The first customer hypothesis is small hardware teams iterating housings, mounts, and fixtures. Reduced redesign and coordination effort is the business hypothesis; willingness to pay is not yet validated.
 
-## Two-minute live demo
+## Boundaries to state honestly
 
-1. **0:00–0:15 — Establish reality.** Open the same assembly in two browser sessions. Show an enclosure body, lid, and PCB reference. Explain that the starter geometry was created during this hackathon.
-2. **0:15–0:40 — Assign work.** Ask the body agent to add board supports and the lid agent to add ventilation while preserving the shared interface. Display actual running status and proposals.
-3. **0:40–1:15 — Introduce a live change.** In the other session, increase PCB width from 40 to 48 mm while an agent is still working. Both sessions reflect the accepted dimension. An obsolete proposal is rejected, and the model revises it against the current interface.
-4. **1:15–1:40 — Inspect the result.** Accept valid proposals, show the assembled and exploded views, and identify the changed parts. Show measured dimensions only for checks implemented in the application.
-5. **1:40–2:00 — Prove usefulness.** Refresh one session, show the accepted project restored, and download STEP. Explain that Terse owns the project's durable state and serializes competing commits.
-
-If inference runs slowly, show its real progress and inspect the last accepted assembly. Do not switch to prerecorded agent actions or fake a completion. A separately labeled demo recording can document an earlier successful run for submission.
-
-## Schedule: solo, hard stop at 4:00 p.m. Pacific
-
-| Target | Deliverable / gate |
-| --- | --- |
-| 12:45–1:10 | Prove Terse local/deployed counter shared across two clients; prove Replicad hollow solid and STEP export. Pin working SDK versions. |
-| 1:10–1:55 | Build viewport and assembly spec; shared project actor; human dimension edits; reconnect snapshot. |
-| 1:55–2:40 | Real model tool loop, body/lid roles, proposals, validation, stale-revision rejection and model repair. |
-| 2:40–3:10 | Deploy end-to-end, open two sessions, verify secret boundaries and geometry worker. |
-| 3:10–3:35 | Run the live-change scenario repeatedly, fix actual failures, finish readable UI and export. |
-| 3:35–3:50 | Record a real run, write submission, rehearse the short pitch. Feature freeze. |
-| 3:50–4:00 | Submit in Builderbase and confirm submission receipt. |
-
-Times are targets, not promises. If time slips, cut fillets, cursor rendering, extra agents, generalized sketching, and animation. Keep real CAD, real AI, Terse persistence, two sessions, and one coordinated design change. Agent Relay is optional and should not endanger those gates.
-
-## Submission checklist
-
-- The venue judging slide says round one evaluates the demo video and project description; eight finalists receive two-minute live demos. Record the central collaborative moment clearly enough to stand alone.
-- Working URL and repository access configured as required by organizers.
-- Short description, actual implementation boundaries, and Terse's role.
-- Video of two sessions, a concurrent change, persistence, and export.
-- Verify whether private repositories are accepted before changing visibility.
-- Ask organizers whether the guaranteed interview can be used for Engram; the posted prize does not specify this.
+- Imported STEP solids are editable; Fusion's timeline and sketch constraints are not imported.
+- Geometry validity is checked, but mechanical connections, clearance, ergonomics, electronics, and manufacturing need review.
+- No canned completions, automatic provider fallback, or target-shaped replacement is used when a tool fails.
+- This is local on the laptop; a localhost share URL does not provide access from other devices.
+- Hosted deployment, authentication, and Terse Cloud setup remain separate work.
+- Demo video should show real model progress. If inference is slow, show accepted state; do not fake completion.

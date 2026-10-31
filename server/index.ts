@@ -6,14 +6,14 @@ import { connectActors } from "./runtime";
 import { GeometryService } from "./geometry";
 import { runAgent } from "./agents";
 import type { ModelConfig } from "./agents";
-import { editSchema } from "../packages/protocol";
+import { editSchema, applyEdit } from "../packages/protocol";
 import type { Project, Edit, Job } from "../packages/protocol";
 
 const { invoke, runtime } = await connectActors();
 const geometry = new GeometryService();
 const app = express();
 app.disable("x-powered-by");
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "20mb" }));
 // Local-only demo. No browser CORS grants and no publicly exposed credential configuration.
 app.use((req, res, next) => {
   const origin = req.get("origin");
@@ -144,6 +144,24 @@ app.post("/api/rooms/:room/edit", async (req, res) => {
     .parse(req.body);
   res.json(await commit(roomOf(req), body.edit, body.author, body.requestId));
 });
+app.post("/api/rooms/:room/undo", async (req, res) => {
+  const body = z
+    .object({
+      baseRevision: z.number().int().min(0),
+      author: z.string().min(1).max(60),
+      requestId: z.string().uuid(),
+    })
+    .parse(req.body);
+  const room = roomOf(req);
+  const state = await invoke(room, "undo", [
+    body.baseRevision,
+    body.author,
+    body.requestId,
+  ]);
+  meshes.delete(room);
+  broadcast(room, state);
+  res.json(state);
+});
 app.get("/api/rooms/:room/meshes", async (req, res) => {
   const room = roomOf(req),
     state = await snapshot(room);
@@ -156,6 +174,47 @@ app.get("/api/rooms/:room/meshes", async (req, res) => {
     meshes.set(room, cache);
   }
   res.json(cache);
+});
+app.post("/api/rooms/:room/import-step", async (req, res) => {
+  const body = z
+    .object({
+      text: z.string().max(18_000_000),
+      fileName: z.string().min(1).max(200),
+      baseRevision: z.number().int().min(0),
+      author: z.string().min(1).max(60),
+    })
+    .parse(req.body);
+  const imported = await geometry.run("import", [], {
+    text: body.text,
+    fileName: body.fileName,
+  });
+  const state = await commit(
+    roomOf(req),
+    {
+      baseRevision: body.baseRevision,
+      summary: `Imported ${body.fileName}: ${imported.bodyCount} editable solid bodies`,
+      upsertParts: imported.parts,
+      removePartIds: [],
+    },
+    body.author,
+  );
+  res.json({
+    state,
+    imported: {
+      bodyCount: imported.bodyCount,
+      matchedNames: imported.matchedNames,
+      translation: imported.translation,
+    },
+  });
+});
+app.get("/api/rooms/:room/parts/:part/inspect", async (req, res) => {
+  const state = await snapshot(roomOf(req));
+  const part = state.parts.find((p) => p.id === req.params.part);
+  if (!part) throw new Error("Unknown body");
+  res.json({
+    revision: state.revision,
+    ...(await geometry.run("inspect", [part])),
+  });
 });
 app.get("/api/rooms/:room/export.step", async (req, res) => {
   const state = await snapshot(roomOf(req));
@@ -203,6 +262,53 @@ app.post("/api/rooms/:room/agents", async (req, res) => {
     { ...config },
     {
       snapshot: () => snapshot(room),
+      inspect: async (partId) => {
+        const state = await snapshot(room);
+        const part = state.parts.find((p) => p.id === partId);
+        if (!part) throw new Error("Unknown body");
+        return {
+          revision: state.revision,
+          ...(await geometry.run("inspect", [part])),
+        };
+      },
+      render: async (ids, view) => {
+        const state = await snapshot(room);
+        const parts = ids.length
+          ? ids.map((id) => {
+              const part = state.parts.find((p) => p.id === id);
+              if (!part) throw new Error(`Unknown body ${id}`);
+              return part;
+            })
+          : state.parts;
+        return {
+          revision: state.revision,
+          ...(await geometry.run("render", parts, { view })),
+        };
+      },
+      distance: async (ids) => {
+        const state = await snapshot(room);
+        const parts = ids.map((id) => {
+          const part = state.parts.find((p) => p.id === id);
+          if (!part) throw new Error(`Unknown body ${id}`);
+          return part;
+        });
+        return {
+          revision: state.revision,
+          ...(await geometry.run("distance", parts)),
+        };
+      },
+      preview: async (edit) => {
+        const state = await snapshot(room);
+        const candidate = applyEdit(state, edit, body.author, randomUUID());
+        return {
+          baseRevision: state.revision,
+          changedPartIds: edit.upsertParts.map((p) => p.id),
+          removedPartIds: edit.removePartIds,
+          ...(await geometry.run("render", candidate.parts, {
+            view: "isometric",
+          })),
+        };
+      },
       measure: async () => {
         const state = await snapshot(room);
         const result = await geometry.run("mesh", state.parts);
