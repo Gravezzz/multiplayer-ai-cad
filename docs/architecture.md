@@ -1,5 +1,7 @@
 # Architecture and implementation contract
 
+Implementation note (October 31): see README for the current working scope. Browser updates currently use SSE through the application server; the durable project lives in Terse, and direct browser-to-actor WebSockets are deferred. Model jobs run outside the actor, with status stored in its document. The implemented CAD vocabulary is box, cylinder, annular arc, ordered union/cut, and transforms. The current demonstration uses wearable redesign, superseding the original enclosure example below.
+
 ## User experience
 
 Large central viewport, left assembly tree, right shared instructions and agent activity. A compact dimension inspector supports genuine human edits. Each proposal names its author, affected parts, base revision, and status. Show previews separately from accepted geometry. A second browser has its own camera and selection but the same accepted assembly and activity.

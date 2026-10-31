@@ -1,5 +1,17 @@
 # Demo and build schedule
 
+## Updated wearable demo (implemented direction)
+
+The user supplied current-prototype STL and a target Fusion/STL design. Use the physical wearable as the opening prop. The new application is the CAD workspace, separate from Engram.
+
+1. Show the current prototype reference in the browser and the wearable in hand. Explain: “I want to move this band over the head and add an under-chin electrode.”
+2. Start the Band designer with the over-head-band task. Before it finishes, start the Electrode designer with the contact pad and support-arm task. Both use real model calls.
+3. Show the target reference briefly, then inspect generated editable components. Turn off the imported reference to see the replacement design clearly. Do not imply the STL's feature history was edited.
+4. Change a generated band's radius or a mount position as a human while another agent is working. Observe the actual outcome; do not manufacture a conflict. If a proposal is stale, its error appears in Activity and returns to the model for repair.
+5. Show the same accepted components in a second browser session, reload, and export the new solids as STEP.
+
+The app provides read/measure/commit tools, a human feature inspector, explicit geometry validation, and version guards. It does not yet provide a full sketch solver, Fusion feature import, medical/electrical validation, or automatically recovered model jobs. Live AI results must be tested after credentials are entered. The older enclosure script below records the initial concept and is superseded by this wearable scenario.
+
 ## Pitch
 
 “Hardware teams don't design one part at a time. They change connected parts together. We're building a shared CAD workspace where AI teammates coordinate those changes alongside you.”
