@@ -13,6 +13,8 @@
 
 The user-provided prize screenshot corroborates the Terse and Agent Relay track distinction. Rules and eligibility for a specific submission remain the organizers' decision.
 
+The user's venue photo of the judging slide adds: first-round judges review demo videos and project descriptions; eight finalists advance; finalists demo from their own laptops for two minutes. Five criteria are each scored 1–5: real-time AI and track technology; originality/creativity; execution/demo; user experience/design; potential impact. Treat the video and description as first-class deliverables, not optional extras.
+
 ## Terse
 
 - [Overview](https://www.useterse.ai/): actor-local SQLite, serialized request handling, multiplayer/agent coordination positioning.

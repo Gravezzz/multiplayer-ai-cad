@@ -32,6 +32,7 @@ Times are targets, not promises. If time slips, cut fillets, cursor rendering, e
 
 ## Submission checklist
 
+- The venue judging slide says round one evaluates the demo video and project description; eight finalists receive two-minute live demos. Record the central collaborative moment clearly enough to stand alone.
 - Working URL and repository access configured as required by organizers.
 - Short description, actual implementation boundaries, and Terse's role.
 - Video of two sessions, a concurrent change, persistence, and export.
